@@ -1,3 +1,5 @@
 *~
 *.joblib
-creditcard.csv
+*.csv
+*.png
+analysis_summary.md
