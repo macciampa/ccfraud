@@ -187,8 +187,9 @@ def get_feature_importance(model, feature_names, model_name):
 
 def plot_results(results):
     """Create comprehensive visualization of results."""
-    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
-    fig.suptitle('Credit Card Fraud Detection - Model Comparison', fontsize=16)
+    # Create main results plot (metrics, ROC, PR curves)
+    fig1, axes1 = plt.subplots(1, 3, figsize=(18, 6))
+    fig1.suptitle('Credit Card Fraud Detection - Model Comparison', fontsize=16)
     
     # 1. Metrics comparison
     metrics = ['accuracy', 'precision', 'recall', 'f1', 'auc', 'auc_pr']
@@ -199,53 +200,61 @@ def plot_results(results):
     
     for i, (model_name, result) in enumerate(results.items()):
         values = [result[metric] for metric in metrics]
-        axes[0, 0].bar(x + i * width, values, width, label=model_name, alpha=0.8)
+        axes1[0].bar(x + i * width, values, width, label=model_name, alpha=0.8)
     
-    axes[0, 0].set_xlabel('Metrics')
-    axes[0, 0].set_ylabel('Score')
-    axes[0, 0].set_title('Model Performance Comparison')
-    axes[0, 0].set_xticks(x + width * 1.5)
-    axes[0, 0].set_xticklabels(metric_names, rotation=45)
-    axes[0, 0].legend()
-    axes[0, 0].grid(True, alpha=0.3)
+    axes1[0].set_xlabel('Metrics')
+    axes1[0].set_ylabel('Score')
+    axes1[0].set_title('Model Performance Comparison')
+    axes1[0].set_xticks(x + width * 1.5)
+    axes1[0].set_xticklabels(metric_names, rotation=45)
+    axes1[0].legend()
+    axes1[0].grid(True, alpha=0.3)
     
     # 2. ROC Curves
     for model_name, result in results.items():
-        axes[0, 1].plot(result['fpr'], result['tpr'], label=f"{model_name} (AUC={result['auc']:.3f})")
+        axes1[1].plot(result['fpr'], result['tpr'], label=f"{model_name} (AUC={result['auc']:.3f})")
     
-    axes[0, 1].plot([0, 1], [0, 1], 'k--', alpha=0.5)
-    axes[0, 1].set_xlabel('False Positive Rate')
-    axes[0, 1].set_ylabel('True Positive Rate')
-    axes[0, 1].set_title('ROC Curves')
-    axes[0, 1].legend()
-    axes[0, 1].grid(True, alpha=0.3)
+    axes1[1].plot([0, 1], [0, 1], 'k--', alpha=0.5)
+    axes1[1].set_xlabel('False Positive Rate')
+    axes1[1].set_ylabel('True Positive Rate')
+    axes1[1].set_title('ROC Curves')
+    axes1[1].legend()
+    axes1[1].grid(True, alpha=0.3)
     
     # 3. Precision-Recall Curves
     for model_name, result in results.items():
-        axes[0, 2].plot(result['recall_curve'], result['precision_curve'], 
+        axes1[2].plot(result['recall_curve'], result['precision_curve'], 
                        label=f"{model_name} (AUC-PR={result['auc_pr']:.3f})")
     
-    axes[0, 2].set_xlabel('Recall')
-    axes[0, 2].set_ylabel('Precision')
-    axes[0, 2].set_title('Precision-Recall Curves')
-    axes[0, 2].legend()
-    axes[0, 2].grid(True, alpha=0.3)
-    
-    # 4-6. Confusion Matrices
-    for i, (model_name, result) in enumerate(results.items()):
-        row = 1
-        col = i
-        if col >= 3:
-            break
-            
-        cm = result['confusion_matrix']
-        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=axes[row, col])
-        axes[row, col].set_title(f'{model_name} - Confusion Matrix')
-        axes[row, col].set_xlabel('Predicted')
-        axes[row, col].set_ylabel('Actual')
+    axes1[2].set_xlabel('Recall')
+    axes1[2].set_ylabel('Precision')
+    axes1[2].set_title('Precision-Recall Curves')
+    axes1[2].legend()
+    axes1[2].grid(True, alpha=0.3)
     
     plt.tight_layout()
     plt.savefig('model_comparison_results.png', dpi=300, bbox_inches='tight')
+    plt.show()
+    
+    # Create separate confusion matrices plot
+    n_models = len(results)
+    fig2, axes2 = plt.subplots(2, 2, figsize=(15, 12))
+    fig2.suptitle('Credit Card Fraud Detection - Confusion Matrices', fontsize=16)
+    
+    axes2 = axes2.flatten()
+    
+    for i, (model_name, result) in enumerate(results.items()):
+        if i >= 4:  # Safety check
+            break
+            
+        cm = result['confusion_matrix']
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=axes2[i])
+        axes2[i].set_title(f'{model_name} - Confusion Matrix')
+        axes2[i].set_xlabel('Predicted')
+        axes2[i].set_ylabel('Actual')
+    
+    plt.tight_layout()
+    plt.savefig('confusion_matrices.png', dpi=300, bbox_inches='tight')
     plt.show()
 
 def plot_feature_importance(feature_importance_dict):
@@ -383,6 +392,7 @@ def main():
     print("\nAnalysis complete! Results saved to:")
     print("- model_comparison_results.csv")
     print("- model_comparison_results.png")
+    print("- confusion_matrices.png")
     print("- feature_importance.png")
     print("- Individual feature importance CSV files")
 
