@@ -18,6 +18,9 @@ warnings.filterwarnings('ignore')
 # Set random seed for reproducibility
 np.random.seed(42)
 
+# Note: This script uses class weights and sample weights to handle the severe class imbalance
+# in the credit card fraud dataset. The imbalance ratio is approximately 577:1 (legitimate:fraud).
+
 def load_and_prepare_data():
     """Load and prepare the credit card fraud dataset."""
     print("Loading credit card fraud dataset...")
@@ -29,12 +32,16 @@ def load_and_prepare_data():
     print(f"Features: {list(df.columns[:-1])}")  # All except 'Class'
     print(f"Target: Class")
     
-    # Check class distribution
+    # Check class distribution and imbalance
     class_counts = df['Class'].value_counts()
+    imbalance_ratio = class_counts[0] / class_counts[1]
+    
     print(f"\nClass distribution:")
     print(f"Legitimate transactions (0): {class_counts[0]:,}")
     print(f"Fraudulent transactions (1): {class_counts[1]:,}")
     print(f"Fraud percentage: {class_counts[1] / len(df) * 100:.2f}%")
+    print(f"Imbalance ratio (legitimate:fraud): {imbalance_ratio:.1f}:1")
+    print(f"Severity: {'Severe' if imbalance_ratio > 100 else 'Moderate' if imbalance_ratio > 10 else 'Mild'} imbalance")
     
     # Separate features and target
     X = df.drop('Class', axis=1)
@@ -74,8 +81,19 @@ def scale_features(X_train, X_val, X_test):
     return X_train_scaled, X_val_scaled, X_test_scaled, scaler
 
 def train_models(X_train, X_val, y_train, y_val):
-    """Train all four models."""
-    print("\nTraining models...")
+    """Train all four models with class weights to handle imbalance."""
+    print("\nTraining models with class weights to handle imbalance...")
+    
+    # Calculate class weights
+    from sklearn.utils.class_weight import compute_class_weight
+    class_weights = compute_class_weight(
+        'balanced',
+        classes=np.unique(y_train),
+        y=y_train
+    )
+    class_weight_dict = dict(zip(np.unique(y_train), class_weights))
+    
+    print(f"Class weights: {class_weight_dict}")
     
     models = {}
     
@@ -85,7 +103,8 @@ def train_models(X_train, X_val, y_train, y_val):
         n_estimators=100,
         max_depth=10,
         random_state=42,
-        n_jobs=-1
+        n_jobs=-1,
+        class_weight='balanced'
     )
     rf.fit(X_train, y_train)
     models['Random Forest'] = rf
@@ -98,7 +117,10 @@ def train_models(X_train, X_val, y_train, y_val):
         learning_rate=0.1,
         random_state=42
     )
-    gbdt.fit(X_train, y_train)
+    # GBDT doesn't support class_weight, so we'll use sample_weight
+    sample_weights = np.ones(len(y_train))
+    sample_weights[y_train == 1] = class_weights[1]  # Fraud class weight
+    gbdt.fit(X_train, y_train, sample_weight=sample_weights)
     models['GBDT'] = gbdt
     
     # 3. Logistic Regression (needs scaled features)
@@ -106,7 +128,8 @@ def train_models(X_train, X_val, y_train, y_val):
     lr = LogisticRegression(
         random_state=42,
         max_iter=1000,
-        solver='liblinear'
+        solver='liblinear',
+        class_weight='balanced'
     )
     lr.fit(X_train, y_train)
     models['Logistic Regression'] = lr
@@ -120,7 +143,8 @@ def train_models(X_train, X_val, y_train, y_val):
         early_stopping=True,
         validation_fraction=0.1
     )
-    nn.fit(X_train, y_train)
+    # Neural Network doesn't support class_weight, so we'll use sample_weight
+    nn.fit(X_train, y_train, sample_weight=sample_weights)
     models['Neural Network'] = nn
     
     return models
@@ -139,8 +163,18 @@ def evaluate_model(model, X_test, y_test, model_name):
     auc = roc_auc_score(y_test, y_pred_proba)
     auc_pr = average_precision_score(y_test, y_pred_proba)
     
+    # Additional metrics for imbalanced datasets
+    from sklearn.metrics import balanced_accuracy_score, matthews_corrcoef
+    balanced_acc = balanced_accuracy_score(y_test, y_pred)
+    mcc = matthews_corrcoef(y_test, y_pred)
+    
     # Confusion matrix
     cm = confusion_matrix(y_test, y_pred)
+    
+    # Calculate additional metrics from confusion matrix
+    tn, fp, fn, tp = cm.ravel()
+    specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
+    sensitivity = tp / (tp + fn) if (tp + fn) > 0 else 0  # Same as recall
     
     # ROC curve
     fpr, tpr, _ = roc_curve(y_test, y_pred_proba)
@@ -156,6 +190,10 @@ def evaluate_model(model, X_test, y_test, model_name):
         'f1': f1,
         'auc': auc,
         'auc_pr': auc_pr,
+        'balanced_accuracy': balanced_acc,
+        'mcc': mcc,
+        'specificity': specificity,
+        'sensitivity': sensitivity,
         'confusion_matrix': cm,
         'fpr': fpr,
         'tpr': tpr,
@@ -192,8 +230,8 @@ def plot_results(results):
     fig1.suptitle('Credit Card Fraud Detection - Model Comparison', fontsize=16)
     
     # 1. Metrics comparison
-    metrics = ['accuracy', 'precision', 'recall', 'f1', 'auc', 'auc_pr']
-    metric_names = ['Accuracy', 'Precision', 'Recall', 'F1-Score', 'AUC-ROC', 'AUC-PR']
+    metrics = ['accuracy', 'precision', 'recall', 'f1', 'auc', 'auc_pr', 'balanced_accuracy', 'mcc']
+    metric_names = ['Accuracy', 'Precision', 'Recall', 'F1-Score', 'AUC-ROC', 'AUC-PR', 'Balanced Acc', 'MCC']
     
     x = np.arange(len(metrics))
     width = 0.2
@@ -302,7 +340,9 @@ def print_results_summary(results, y_test):
             'Recall': f"{result['recall']:.4f}",
             'F1-Score': f"{result['f1']:.4f}",
             'AUC-ROC': f"{result['auc']:.4f}",
-            'AUC-PR': f"{result['auc_pr']:.4f}"
+            'AUC-PR': f"{result['auc_pr']:.4f}",
+            'Balanced Acc': f"{result['balanced_accuracy']:.4f}",
+            'MCC': f"{result['mcc']:.4f}"
         })
     
     summary_df = pd.DataFrame(summary_data)
@@ -321,6 +361,10 @@ def print_results_summary(results, y_test):
         print(f"F1-Score: {result['f1']:.4f}")
         print(f"AUC-ROC: {result['auc']:.4f}")
         print(f"AUC-PR: {result['auc_pr']:.4f}")
+        print(f"Balanced Accuracy: {result['balanced_accuracy']:.4f}")
+        print(f"Matthews Correlation: {result['mcc']:.4f}")
+        print(f"Specificity: {result['specificity']:.4f}")
+        print(f"Sensitivity: {result['sensitivity']:.4f}")
         
         print(f"\nConfusion Matrix:")
         print(result['confusion_matrix'])
@@ -378,7 +422,11 @@ def main():
             'Recall': result['recall'],
             'F1_Score': result['f1'],
             'AUC_ROC': result['auc'],
-            'AUC_PR': result['auc_pr']
+            'AUC_PR': result['auc_pr'],
+            'Balanced_Accuracy': result['balanced_accuracy'],
+            'MCC': result['mcc'],
+            'Specificity': result['specificity'],
+            'Sensitivity': result['sensitivity']
         })
     
     results_df = pd.DataFrame(summary_data)

@@ -50,7 +50,8 @@ The pipeline in `credit_card_fraud_analysis.py`:
 - Loads `creditcard.csv`
 - Splits data into train/validation/test with stratification
 - Scales features (StandardScaler) and trains all models on scaled features for consistency
-- Evaluates models using Accuracy, Precision, Recall, F1, AUC-ROC, and AUC-PR
+- **Handles class imbalance** using class weights and sample weights for better fraud detection
+- Evaluates models using comprehensive metrics including balanced accuracy and Matthews correlation
 - Saves a CSV summary and plots for model comparison and feature importance
 
 ### Outputs
@@ -60,3 +61,14 @@ After a successful run, the following files are generated in the project root:
 - `confusion_matrices.png`: Confusion matrices for all four models
 - `feature_importance.png`: Top features for models that expose importances/coefficients
 - `<ModelName>_feature_importance.csv`: Per-model feature importance where available
+
+### Class Imbalance Handling
+The dataset has a severe class imbalance (577:1 legitimate:fraud ratio). The script addresses this by:
+- **Random Forest & Logistic Regression**: Using `class_weight='balanced'` parameter
+- **GBDT & Neural Network**: Using sample weights calculated from class distribution
+- **Evaluation**: Including balanced accuracy, Matthews correlation coefficient, and specificity metrics
+
+### Configuration Tips
+- You can adjust model hyperparameters in `train_models` within `credit_card_fraud_analysis.py`.
+- To emphasize recall (catch more fraud), consider threshold tuning using the predicted probabilities stored in the results.
+- Class weights are automatically calculated based on training data distribution.
