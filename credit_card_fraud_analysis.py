@@ -3,7 +3,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.ensemble import RandomForestClassifier
+from xgboost import XGBClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler
@@ -109,19 +110,20 @@ def train_models(X_train, X_val, y_train, y_val):
     rf.fit(X_train, y_train)
     models['Random Forest'] = rf
     
-    # 2. Gradient Boosting Decision Tree (GBDT)
-    print("Training GBDT...")
-    gbdt = GradientBoostingClassifier(
+    # 2. XGBoost Classifier
+    print("Training XGBoost...")
+    xgb = XGBClassifier(
         n_estimators=100,
-        max_depth=6,
+        max_depth=3,
         learning_rate=0.1,
-        random_state=42
+        random_state=42,
+        eval_metric='logloss'
     )
-    # GBDT doesn't support class_weight, so we'll use sample_weight
+    # XGBoost supports sample_weight for handling class imbalance
     sample_weights = np.ones(len(y_train))
     sample_weights[y_train == 1] = class_weights[1]  # Fraud class weight
-    gbdt.fit(X_train, y_train, sample_weight=sample_weights)
-    models['GBDT'] = gbdt
+    xgb.fit(X_train, y_train, sample_weight=sample_weights)
+    models['XGBoost'] = xgb
     
     # 3. Logistic Regression (needs scaled features)
     print("Training Logistic Regression...")
@@ -146,6 +148,15 @@ def train_models(X_train, X_val, y_train, y_val):
     # Neural Network doesn't support class_weight, so we'll use sample_weight
     nn.fit(X_train, y_train, sample_weight=sample_weights)
     models['Neural Network'] = nn
+    
+    # Report model sizes
+    print("\n" + "="*60)
+    print("MODEL SIZE ANALYSIS")
+    print("="*60)
+    
+    for model_name, model in models.items():
+        model_size = get_model_size(model)
+        print(f"{model_name}: {model_size}")
     
     return models
 
@@ -202,6 +213,27 @@ def evaluate_model(model, X_test, y_test, model_name):
         'y_pred': y_pred,
         'y_pred_proba': y_pred_proba
     }
+
+def get_model_size(model):
+    """Calculate the size of a trained model in MB or KB."""
+    import sys
+    import pickle
+    
+    try:
+        # Serialize the model to get its size
+        model_bytes = pickle.dumps(model)
+        size_bytes = len(model_bytes)
+        
+        # Convert to appropriate unit
+        if size_bytes >= 1024 * 1024:  # >= 1 MB
+            size_mb = size_bytes / (1024 * 1024)
+            return f"{size_mb:.2f} MB"
+        else:
+            size_kb = size_bytes / 1024
+            return f"{size_kb:.2f} KB"
+            
+    except Exception as e:
+        return f"Error calculating size: {str(e)}"
 
 def get_feature_importance(model, feature_names, model_name):
     """Extract feature importance for models that support it."""
@@ -324,6 +356,116 @@ def plot_feature_importance(feature_importance_dict):
     plt.savefig('feature_importance.png', dpi=300, bbox_inches='tight')
     plt.show()
 
+def visualize_neural_network(nn_model, feature_names):
+    """Visualize the Neural Network architecture and learned weights."""
+    print("\n" + "="*80)
+    print("NEURAL NETWORK MODEL ANALYSIS")
+    print("="*80)
+    
+    # Get model architecture details
+    n_features = len(feature_names)
+    hidden_layers = nn_model.hidden_layer_sizes
+    n_outputs = 1  # Binary classification
+    
+    # Calculate total parameters manually since n_parameters_ might not be available
+    total_params = 0
+    if hasattr(nn_model, 'coefs_') and hasattr(nn_model, 'intercepts_'):
+        for i, coef in enumerate(nn_model.coefs_):
+            total_params += coef.size
+        for intercept in nn_model.intercepts_:
+            total_params += intercept.size
+    
+    print(f"Architecture: {n_features} → {hidden_layers} → {n_outputs}")
+    print(f"Total parameters: {total_params:,}")
+    print(f"Activation function: {nn_model.activation}")
+    print(f"Learning rate: {getattr(nn_model, 'learning_rate_init', 'Not available')}")
+    print(f"Max iterations: {nn_model.max_iter}")
+    print(f"Convergence: {'Yes' if hasattr(nn_model, 'n_iter_') and nn_model.n_iter_ < nn_model.max_iter else 'No'}")
+    print(f"Iterations to converge: {getattr(nn_model, 'n_iter_', 'Not available')}")
+    
+    # Create network architecture visualization
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 8))
+    
+    # 1. Network Architecture Diagram
+    ax1.set_title('Neural Network Architecture', fontsize=16, fontweight='bold')
+    ax1.set_xlim(0, 4)
+    ax1.set_ylim(0, 10)
+    ax1.axis('off')
+    
+    # Draw layers
+    layer_positions = [0, 1, 2, 3]
+    layer_sizes = [n_features] + list(hidden_layers) + [n_outputs]
+    layer_names = ['Input\n(30 features)'] + [f'Hidden {i+1}\n({size} neurons)' for i, size in enumerate(hidden_layers)] + ['Output\n(1 neuron)']
+    
+    for i, (pos, size, name) in enumerate(zip(layer_positions, layer_sizes, layer_names)):
+        # Draw neurons as circles
+        for j in range(size):
+            y_pos = 9 - (j * 8 / max(size, 1))
+            circle = plt.Circle((pos, y_pos), 0.3, fill=True, color='lightblue', edgecolor='black', linewidth=1)
+            ax1.add_patch(circle)
+        
+        # Add layer label
+        ax1.text(pos, -0.5, name, ha='center', va='top', fontsize=10, fontweight='bold')
+    
+    # Draw connections (simplified)
+    for i in range(len(layer_positions) - 1):
+        for j in range(layer_sizes[i]):
+            for k in range(layer_sizes[i + 1]):
+                y1 = 9 - (j * 8 / max(layer_sizes[i], 1))
+                y2 = 9 - (k * 8 / max(layer_sizes[i + 1], 1))
+                ax1.plot([layer_positions[i] + 0.3, layer_positions[i + 1] - 0.3], [y1, y2], 
+                        'k-', alpha=0.1, linewidth=0.5)
+    
+    # 2. Weight Distribution Analysis
+    ax2.set_title('Weight Distribution Analysis', fontsize=16, fontweight='bold')
+    
+    # Get weight matrices
+    coefs = nn_model.coefs_
+    intercepts = nn_model.intercepts_
+    
+    # Flatten all weights for distribution analysis
+    all_weights = []
+    for coef in coefs:
+        all_weights.extend(coef.flatten())
+    
+    # Plot weight distribution
+    ax2.hist(all_weights, bins=50, alpha=0.7, color='skyblue', edgecolor='black')
+    ax2.axvline(x=0, color='red', linestyle='--', alpha=0.8, label='Zero')
+    ax2.axvline(x=np.mean(all_weights), color='green', linestyle='--', alpha=0.8, 
+                label=f'Mean: {np.mean(all_weights):.4f}')
+    ax2.axvline(x=np.std(all_weights), color='orange', linestyle='--', alpha=0.8, 
+                label=f'Std: {np.std(all_weights):.4f}')
+    
+    ax2.set_xlabel('Weight Values')
+    ax2.set_ylabel('Frequency')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig('neural_network_analysis.png', dpi=300, bbox_inches='tight')
+    plt.show()
+    
+    # Print detailed weight statistics
+    print(f"\nWeight Statistics:")
+    print(f"  - Total weights: {len(all_weights):,}")
+    print(f"  - Mean weight: {np.mean(all_weights):.6f}")
+    print(f"  - Std weight: {np.std(all_weights):.6f}")
+    print(f"  - Min weight: {np.min(all_weights):.6f}")
+    print(f"  - Max weight: {np.max(all_weights):.6f}")
+    print(f"  - Zero weights: {np.sum(np.abs(all_weights) < 1e-10):,} ({np.sum(np.abs(all_weights) < 1e-10)/len(all_weights)*100:.2f}%)")
+    
+    # Layer-by-layer analysis
+    print(f"\nLayer-by-Layer Analysis:")
+    for i, (coef, intercept) in enumerate(zip(coefs, intercepts)):
+        layer_name = "Input → Hidden 1" if i == 0 else f"Hidden {i} → Hidden {i+1}" if i < len(coefs)-1 else "Hidden → Output"
+        print(f"  {layer_name}:")
+        print(f"    - Weights shape: {coef.shape}")
+        print(f"    - Bias shape: {intercept.shape}")
+        print(f"    - Weight range: [{coef.min():.4f}, {coef.max():.4f}]")
+        print(f"    - Bias range: [{intercept.min():.4f}, {intercept.max():.4f}]")
+    
+    return fig
+
 def print_results_summary(results, y_test):
     """Print a comprehensive summary of all results."""
     print("\n" + "="*80)
@@ -406,17 +548,46 @@ def main():
     # Print results summary
     print_results_summary(results, y_test)
     
+    # Print detailed model size analysis
+    print("\n" + "="*80)
+    print("DETAILED MODEL SIZE ANALYSIS")
+    print("="*80)
+    
+    for model_name, model in models.items():
+        model_size = get_model_size(model)
+        print(f"\n{model_name}:")
+        print(f"  - Size: {model_size}")
+        
+        # Additional model-specific information
+        if hasattr(model, 'n_estimators'):
+            print(f"  - Number of estimators: {model.n_estimators}")
+        if hasattr(model, 'hidden_layer_sizes'):
+            print(f"  - Hidden layers: {model.hidden_layer_sizes}")
+        if hasattr(model, 'max_depth'):
+            print(f"  - Max depth: {model.max_depth}")
+    
     # Create visualizations
     print("\nCreating visualizations...")
     plot_results(results)
     plot_feature_importance(feature_importance_dict)
     
+    # Visualize Neural Network specifically
+    if 'Neural Network' in models:
+        print("\nGenerating Neural Network visualization...")
+        nn_model = models['Neural Network']
+        visualize_neural_network(nn_model, X.columns)
+    
     # Save results to CSV
     print("\nSaving results to CSV...")
     summary_data = []
     for model_name, result in results.items():
+        # Get model size for this model
+        model = models[model_name]
+        model_size = get_model_size(model)
+        
         summary_data.append({
             'Model': model_name,
+            'Model_Size': model_size,
             'Accuracy': result['accuracy'],
             'Precision': result['precision'],
             'Recall': result['recall'],
@@ -442,6 +613,7 @@ def main():
     print("- model_comparison_results.png")
     print("- confusion_matrices.png")
     print("- feature_importance.png")
+    print("- neural_network_analysis.png")
     print("- Individual feature importance CSV files")
 
 if __name__ == "__main__":
