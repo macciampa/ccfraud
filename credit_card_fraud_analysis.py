@@ -19,8 +19,9 @@ warnings.filterwarnings('ignore')
 # Set random seed for reproducibility
 np.random.seed(42)
 
-# Note: This script uses class weights and sample weights to handle the severe class imbalance
+# Note: This script has an option to use class weights and sample weights to handle the severe class imbalance
 # in the credit card fraud dataset. The imbalance ratio is approximately 577:1 (legitimate:fraud).
+# Currently set to use_class_weights=False for standard training without class imbalance handling.
 
 def load_and_prepare_data():
     """Load and prepare the credit card fraud dataset."""
@@ -81,32 +82,39 @@ def scale_features(X_train, X_val, X_test):
     
     return X_train_scaled, X_val_scaled, X_test_scaled, scaler
 
-def train_models(X_train, X_val, y_train, y_val):
-    """Train all four models with class weights to handle imbalance."""
-    print("\nTraining models with class weights to handle imbalance...")
-    
-    # Calculate class weights
-    from sklearn.utils.class_weight import compute_class_weight
-    class_weights = compute_class_weight(
-        'balanced',
-        classes=np.unique(y_train),
-        y=y_train
-    )
-    class_weight_dict = dict(zip(np.unique(y_train), class_weights))
-    
-    print(f"Class weights: {class_weight_dict}")
+def train_models(X_train, X_val, y_train, y_val, use_class_weights=False):
+    """Train all four models with optional class weights to handle imbalance."""
+    if use_class_weights:
+        print("\nTraining models with class weights to handle imbalance...")
+        
+        # Calculate class weights
+        from sklearn.utils.class_weight import compute_class_weight
+        class_weights = compute_class_weight(
+            'balanced',
+            classes=np.unique(y_train),
+            y=y_train
+        )
+        class_weight_dict = dict(zip(np.unique(y_train), class_weights))
+        
+        print(f"Class weights: {class_weight_dict}")
+    else:
+        print("\nTraining models without class weights (standard training)...")
     
     models = {}
     
     # 1. Random Forest
     print("Training Random Forest...")
-    rf = RandomForestClassifier(
-        n_estimators=100,
-        max_depth=10,
-        random_state=42,
-        n_jobs=-1,
-        class_weight='balanced'
-    )
+    rf_params = {
+        'n_estimators': 100,
+        'max_depth': 10,
+        'random_state': 42,
+        'n_jobs': -1
+    }
+    
+    if use_class_weights:
+        rf_params['class_weight'] = 'balanced'
+    
+    rf = RandomForestClassifier(**rf_params)
     rf.fit(X_train, y_train)
     models['Random Forest'] = rf
     
@@ -119,20 +127,29 @@ def train_models(X_train, X_val, y_train, y_val):
         random_state=42,
         eval_metric='logloss'
     )
-    # XGBoost supports sample_weight for handling class imbalance
-    sample_weights = np.ones(len(y_train))
-    sample_weights[y_train == 1] = class_weights[1]  # Fraud class weight
-    xgb.fit(X_train, y_train, sample_weight=sample_weights)
+    
+    if use_class_weights:
+        # XGBoost supports sample_weight for handling class imbalance
+        sample_weights = np.ones(len(y_train))
+        sample_weights[y_train == 1] = class_weights[1]  # Fraud class weight
+        xgb.fit(X_train, y_train, sample_weight=sample_weights)
+    else:
+        xgb.fit(X_train, y_train)
+    
     models['XGBoost'] = xgb
     
     # 3. Logistic Regression (needs scaled features)
     print("Training Logistic Regression...")
-    lr = LogisticRegression(
-        random_state=42,
-        max_iter=1000,
-        solver='liblinear',
-        class_weight='balanced'
-    )
+    lr_params = {
+        'random_state': 42,
+        'max_iter': 1000,
+        'solver': 'liblinear'
+    }
+    
+    if use_class_weights:
+        lr_params['class_weight'] = 'balanced'
+    
+    lr = LogisticRegression(**lr_params)
     lr.fit(X_train, y_train)
     models['Logistic Regression'] = lr
     
@@ -145,8 +162,13 @@ def train_models(X_train, X_val, y_train, y_val):
         early_stopping=True,
         validation_fraction=0.1
     )
-    # Neural Network doesn't support class_weight, so we'll use sample_weight
-    nn.fit(X_train, y_train, sample_weight=sample_weights)
+    
+    if use_class_weights:
+        # Neural Network doesn't support class_weight, so we'll use sample_weight
+        nn.fit(X_train, y_train, sample_weight=sample_weights)
+    else:
+        nn.fit(X_train, y_train)
+    
     models['Neural Network'] = nn
     
     # Report model sizes
@@ -529,7 +551,8 @@ def main():
     X_train_scaled, X_val_scaled, X_test_scaled, scaler = scale_features(X_train, X_val, X_test)
     
     # Train models (using scaled features for all models for consistency)
-    models = train_models(X_train_scaled, X_val_scaled, y_train, y_val)
+    # Set use_class_weights=False to disable class weight handling
+    models = train_models(X_train_scaled, X_val_scaled, y_train, y_val, use_class_weights=False)
     
     # Evaluate all models
     print("\nEvaluating models on test set...")
