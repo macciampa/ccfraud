@@ -71,6 +71,29 @@ def split_data(X, y):
     
     return X_train, X_val, X_test, y_train, y_val, y_test
 
+def summarize_split_class_counts(y_train, y_val, y_test):
+    """Print positive/negative class counts for train/val/test splits and return a DataFrame."""
+    def counts(y):
+        pos = int((y == 1).sum())
+        neg = int((y == 0).sum())
+        total = pos + neg
+        pos_pct = (pos / total * 100.0) if total > 0 else 0.0
+        neg_pct = (neg / total * 100.0) if total > 0 else 0.0
+        return pos, neg, total, pos_pct, neg_pct
+    tr_pos, tr_neg, tr_total, tr_pos_pct, tr_neg_pct = counts(y_train)
+    va_pos, va_neg, va_total, va_pos_pct, va_neg_pct = counts(y_val)
+    te_pos, te_neg, te_total, te_pos_pct, te_neg_pct = counts(y_test)
+    print("\nClass distribution per split:")
+    print(f"  Train: total={tr_total:,}, negatives(0)={tr_neg:,} ({tr_neg_pct:.2f}%), positives(1)={tr_pos:,} ({tr_pos_pct:.2f}%)")
+    print(f"  Val:   total={va_total:,}, negatives(0)={va_neg:,} ({va_neg_pct:.2f}%), positives(1)={va_pos:,} ({va_pos_pct:.2f}%)")
+    print(f"  Test:  total={te_total:,}, negatives(0)={te_neg:,} ({te_neg_pct:.2f}%), positives(1)={te_pos:,} ({te_pos_pct:.2f}%)")
+    df = pd.DataFrame([
+        {'Split': 'Train', 'Total': tr_total, 'Negatives_0': tr_neg, 'Positives_1': tr_pos, 'Neg_%': tr_neg_pct, 'Pos_%': tr_pos_pct},
+        {'Split': 'Validation', 'Total': va_total, 'Negatives_0': va_neg, 'Positives_1': va_pos, 'Neg_%': va_neg_pct, 'Pos_%': va_pos_pct},
+        {'Split': 'Test', 'Total': te_total, 'Negatives_0': te_neg, 'Positives_1': te_pos, 'Neg_%': te_neg_pct, 'Pos_%': te_pos_pct},
+    ])
+    return df
+
 def scale_features(X_train, X_val, X_test):
     """Scale features using StandardScaler."""
     print("\nScaling features...")
@@ -235,6 +258,13 @@ def evaluate_model(model, X_test, y_test, model_name):
         'y_pred': y_pred,
         'y_pred_proba': y_pred_proba
     }
+
+def evaluate_auc_metrics(model, X, y):
+    """Compute AUC-ROC and AUC-PR for a given split."""
+    y_pred_proba = model.predict_proba(X)[:, 1]
+    auc = roc_auc_score(y, y_pred_proba)
+    auc_pr = average_precision_score(y, y_pred_proba)
+    return auc, auc_pr
 
 def get_model_size(model):
     """Calculate the size of a trained model in MB or KB."""
@@ -536,6 +566,28 @@ def print_results_summary(results, y_test):
         print(f"\nClassification Report:")
         print(classification_report(y_test, result['y_pred']))
 
+def summarize_auc_across_splits(models, X_train, y_train, X_val, y_val, X_test, y_test):
+    """Compute AUC-ROC and AUC-PR for train/val/test for each model and print/save."""
+    rows = []
+    for model_name, model in models.items():
+        auc_tr, auc_pr_tr = evaluate_auc_metrics(model, X_train, y_train)
+        auc_va, auc_pr_va = evaluate_auc_metrics(model, X_val, y_val)
+        auc_te, auc_pr_te = evaluate_auc_metrics(model, X_test, y_test)
+        rows.append({
+            'Model': model_name,
+            'AUC_ROC_Train': auc_tr,
+            'AUC_PR_Train': auc_pr_tr,
+            'AUC_ROC_Val': auc_va,
+            'AUC_PR_Val': auc_pr_va,
+            'AUC_ROC_Test': auc_te,
+            'AUC_PR_Test': auc_pr_te,
+        })
+    df = pd.DataFrame(rows)
+    print("\nAUC metrics by split (higher is better):")
+    print(df.to_string(index=False, float_format=lambda x: f"{x:.4f}"))
+    df.to_csv('auc_summary.csv', index=False)
+    return df
+
 def main():
     """Main execution function."""
     print("Credit Card Fraud Detection - Model Comparison")
@@ -554,7 +606,10 @@ def main():
     # Set use_class_weights=False to disable class weight handling
     models = train_models(X_train_scaled, X_val_scaled, y_train, y_val, use_class_weights=False)
     
-    # Evaluate all models
+    # Report split class counts
+    split_counts_df = summarize_split_class_counts(y_train, y_val, y_test)
+
+    # Evaluate all models (on test set for detailed metrics/curves)
     print("\nEvaluating models on test set...")
     results = {}
     feature_importance_dict = {}
@@ -568,6 +623,14 @@ def main():
         feature_importance = get_feature_importance(model, X.columns, model_name)
         feature_importance_dict[model_name] = feature_importance
     
+    # AUC metrics for train/val/test for each model
+    summarize_auc_across_splits(
+        models,
+        X_train_scaled, y_train,
+        X_val_scaled, y_val,
+        X_test_scaled, y_test,
+    )
+
     # Print results summary
     print_results_summary(results, y_test)
     
@@ -625,6 +688,9 @@ def main():
     
     results_df = pd.DataFrame(summary_data)
     results_df.to_csv('model_comparison_results.csv', index=False)
+
+    # Save split class counts
+    split_counts_df.to_csv('split_class_counts.csv', index=False)
     
     # Save feature importance to CSV
     for model_name, importance_df in feature_importance_dict.items():
